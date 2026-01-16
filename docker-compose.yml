@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: orgs_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orgs}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orgs_api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-orgs}
+    ports:
+      - "8080:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    volumes:
+      - ./src:/app/src:rw
+      - ./migrations:/app/migrations:rw
+      - ./alembic.ini:/app/alembic.ini:rw
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-orgs}
+      API_KEY: "dev-key-123"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    restart: "no"
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-orgs}
+      API_KEY: "dev-key-123"
+      PYTHONPATH: "src"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["uv", "run", "python", "-m", "app.scripts.seed", "--truncate"]
+    restart: "no"
+
+volumes:
+  pgdata:
